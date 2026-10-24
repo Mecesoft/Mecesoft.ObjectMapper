@@ -1,0 +1,50 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <RootNamespace>Mecesoft.ObjectMapper</RootNamespace>
+        <AssemblyName>Mecesoft.ObjectMapper</AssemblyName>
+        <LangVersion>latest</LangVersion>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <PropertyGroup Label="Package">
+        <PackageId>Mecesoft.ObjectMapper</PackageId>
+        <Version>1.0.0</Version>
+        <Title>Mecesoft.ObjectMapper</Title>
+        <Description>Minimal, reflection-based object mapper for .NET.</Description>
+        <Authors>Mecesoft</Authors>
+        <Company>Mecesoft</Company>
+        <Copyright>Copyright (c) 2026 Mecesoft</Copyright>
+        <PackageTags>mapper;object-mapper;mapping;object-mapping;dotnet</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+        <PackageProjectUrl>https://github.com/Mecesoft/Mecesoft.ObjectMapper</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/Mecesoft/Mecesoft.ObjectMapper</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <PackageReleaseNotes>1.0.0 - Initial Mecesoft.ObjectMapper release.</PackageReleaseNotes>
+    </PropertyGroup>
+
+    <PropertyGroup Label="Build">
+        <Deterministic>true</Deterministic>
+        <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+        <IsPackable>true</IsPackable>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="..\README.md" Pack="true" PackagePath="\" Link="README.md" />
+        <None Include="..\LICENSE" Pack="true" PackagePath="\" Link="LICENSE" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.402" PrivateAssets="all" />
+    </ItemGroup>
+
+</Project>

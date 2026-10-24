@@ -1,0 +1,39 @@
+# Build output
+bin/
+obj/
+artifacts/
+TestResults/
+/packages/
+BenchmarkDotNet.Artifacts/
+*.binlog
+*.trx
+*.coverage
+coverage/
+
+# Packaging
+*.nupkg
+*.snupkg
+
+# Benchmark and tool logs
+*.log
+
+# IDE files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+riderModule.iml
+/_ReSharper.Caches/
+
+# OS files
+.DS_Store
+
+# Local secrets and certificates
+.env
+.env.*
+secrets.json
+*.pfx
+*.p12
+*.key

@@ -42,15 +42,31 @@ jobs:
         run: dotnet restore Mecesoft.ObjectMapper.sln
 
       - name: Build
-        run: dotnet build Mecesoft.ObjectMapper.sln --configuration Release --no-restore
+        run: dotnet build Mecesoft.ObjectMapper.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
 
-      - name: Test
-        run: >
-          dotnet test Mecesoft.ObjectMapper.sln
-          --configuration Release
-          --no-build
-          --logger "trx;LogFileName=test-results.trx"
-          --results-directory TestResults
+      - name: Test net8.0
+        run: |
+          set -euo pipefail
+          for project in Mecesoft.ObjectMapper.Tests Mecesoft.ObjectMapper.DependencyInjection.Tests; do
+            dotnet test "$project/$project.csproj" \
+              --configuration Release \
+              --no-build \
+              --framework net8.0 \
+              --logger "trx;LogFileName=${project}-net8.trx" \
+              --results-directory TestResults
+          done
+
+      - name: Test net10.0
+        run: |
+          set -euo pipefail
+          for project in Mecesoft.ObjectMapper.Tests Mecesoft.ObjectMapper.DependencyInjection.Tests; do
+            dotnet test "$project/$project.csproj" \
+              --configuration Release \
+              --no-build \
+              --framework net10.0 \
+              --logger "trx;LogFileName=${project}-net10.trx" \
+              --results-directory TestResults
+          done
 
       - name: Pack
         run: |
@@ -62,6 +78,7 @@ jobs:
             --configuration Release \
             --no-build \
             --output artifacts
+          (cd artifacts && sha256sum *.nupkg *.snupkg > SHA256SUMS)
 
       - name: Upload test results
         if: always()

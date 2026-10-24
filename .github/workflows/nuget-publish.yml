@@ -1,0 +1,292 @@
+name: NuGet Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type publish-1.0.0 to confirm this manual release"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-publish-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  PACKAGE_VERSION: 1.0.0
+  NUGET_SOURCE: https://api.nuget.org/v3/index.json
+
+jobs:
+  build:
+    name: Build and verify packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate release dispatch
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "::error::NuGet release must be dispatched from the main branch."
+            exit 1
+          fi
+          if [ "${CONFIRM}" != "publish-${PACKAGE_VERSION}" ]; then
+            echo "::error::Confirmation must be exactly publish-${PACKAGE_VERSION}."
+            exit 1
+          fi
+          {
+            echo "### NuGet release source"
+            echo ""
+            echo "- Repository: ${GITHUB_REPOSITORY}"
+            echo "- Branch: ${GITHUB_REF_NAME}"
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Version: ${PACKAGE_VERSION}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout exact source commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore Mecesoft.ObjectMapper.sln --configfile NuGet.config
+
+      - name: Build
+        run: dotnet build Mecesoft.ObjectMapper.sln --configuration Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test net8.0
+        run: |
+          set -euo pipefail
+          for project in Mecesoft.ObjectMapper.Tests Mecesoft.ObjectMapper.DependencyInjection.Tests; do
+            dotnet test "$project/$project.csproj" \
+              --configuration Release \
+              --no-build \
+              --framework net8.0 \
+              --logger "trx;LogFileName=${project}-net8.trx" \
+              --results-directory TestResults
+          done
+
+      - name: Test net10.0
+        run: |
+          set -euo pipefail
+          for project in Mecesoft.ObjectMapper.Tests Mecesoft.ObjectMapper.DependencyInjection.Tests; do
+            dotnet test "$project/$project.csproj" \
+              --configuration Release \
+              --no-build \
+              --framework net10.0 \
+              --logger "trx;LogFileName=${project}-net10.trx" \
+              --results-directory TestResults
+          done
+
+      - name: Pack core and DI packages
+        run: |
+          set -euo pipefail
+          dotnet pack Mecesoft.ObjectMapper/Mecesoft.ObjectMapper.csproj \
+            --configuration Release \
+            --no-build \
+            --output artifacts
+          dotnet pack Mecesoft.ObjectMapper.DependencyInjection/Mecesoft.ObjectMapper.DependencyInjection.csproj \
+            --configuration Release \
+            --no-build \
+            --output artifacts
+
+      - name: Verify package artifacts
+        run: |
+          set -euo pipefail
+          core="artifacts/Mecesoft.ObjectMapper.${PACKAGE_VERSION}.nupkg"
+          core_symbols="artifacts/Mecesoft.ObjectMapper.${PACKAGE_VERSION}.snupkg"
+          di="artifacts/Mecesoft.ObjectMapper.DependencyInjection.${PACKAGE_VERSION}.nupkg"
+          di_symbols="artifacts/Mecesoft.ObjectMapper.DependencyInjection.${PACKAGE_VERSION}.snupkg"
+
+          for package in "$core" "$core_symbols" "$di" "$di_symbols"; do
+            test -f "$package"
+          done
+
+          core_nuspec="$(unzip -p "$core" '*.nuspec')"
+          di_nuspec="$(unzip -p "$di" '*.nuspec')"
+
+          grep -Fq '<id>Mecesoft.ObjectMapper</id>' <<< "$core_nuspec"
+          grep -Fq "<version>${PACKAGE_VERSION}</version>" <<< "$core_nuspec"
+          grep -Fq '<id>Mecesoft.ObjectMapper.DependencyInjection</id>' <<< "$di_nuspec"
+          grep -Fq "<version>${PACKAGE_VERSION}</version>" <<< "$di_nuspec"
+
+          if grep -q '<dependency ' <<< "$core_nuspec"; then
+            echo "::error::Core package must not contain package dependencies."
+            exit 1
+          fi
+
+          grep -Fq '<dependency id="Mecesoft.ObjectMapper" version="1.0.0"' <<< "$di_nuspec"
+          grep -Fq '<dependency id="Microsoft.Extensions.DependencyInjection.Abstractions" version="8.0.2"' <<< "$di_nuspec"
+          grep -Fq '<dependency id="Microsoft.Extensions.DependencyInjection.Abstractions" version="10.0.13"' <<< "$di_nuspec"
+
+          for package in "$core" "$di"; do
+            unzip -l "$package" | grep -F 'README.md' >/dev/null
+            unzip -l "$package" | grep -F 'LICENSE' >/dev/null
+            unzip -l "$package" | grep -F 'lib/net8.0/Mecesoft.ObjectMapper' >/dev/null
+            unzip -l "$package" | grep -F 'lib/net10.0/Mecesoft.ObjectMapper' >/dev/null
+          done
+
+          for package in "$core_symbols" "$di_symbols"; do
+            unzip -l "$package" | grep -F '.pdb' >/dev/null
+            unzip -p "$package" '*.pdb' | strings | \
+              grep -F "raw.githubusercontent.com/Mecesoft/Mecesoft.ObjectMapper/${GITHUB_SHA}" >/dev/null
+          done
+
+          cd artifacts
+          sha256sum *.nupkg *.snupkg > SHA256SUMS
+          sha256sum -c SHA256SUMS
+          {
+            echo "### Package SHA256 checksums"
+            echo ""
+            echo '```text'
+            cat SHA256SUMS
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nuget-packages
+          path: artifacts
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-results
+          path: TestResults
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish to NuGet.org
+    needs: build
+    environment: nuget
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Download verified package artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nuget-packages
+          path: artifacts
+
+      - name: Verify checksums and package metadata
+        run: |
+          set -euo pipefail
+          cd artifacts
+          sha256sum -c SHA256SUMS
+
+          core="Mecesoft.ObjectMapper.${PACKAGE_VERSION}.nupkg"
+          core_symbols="Mecesoft.ObjectMapper.${PACKAGE_VERSION}.snupkg"
+          di="Mecesoft.ObjectMapper.DependencyInjection.${PACKAGE_VERSION}.nupkg"
+          di_symbols="Mecesoft.ObjectMapper.DependencyInjection.${PACKAGE_VERSION}.snupkg"
+
+          for package in "$core" "$core_symbols" "$di" "$di_symbols"; do
+            test -f "$package"
+          done
+
+          core_nuspec="$(unzip -p "$core" '*.nuspec')"
+          di_nuspec="$(unzip -p "$di" '*.nuspec')"
+
+          grep -Fq "commit=\"${GITHUB_SHA}\"" <<< "$core_nuspec"
+          grep -Fq "commit=\"${GITHUB_SHA}\"" <<< "$di_nuspec"
+          grep -Fq '<id>Mecesoft.ObjectMapper</id>' <<< "$core_nuspec"
+          grep -Fq '<id>Mecesoft.ObjectMapper.DependencyInjection</id>' <<< "$di_nuspec"
+          grep -Fq "<version>${PACKAGE_VERSION}</version>" <<< "$core_nuspec"
+          grep -Fq "<version>${PACKAGE_VERSION}</version>" <<< "$di_nuspec"
+
+          if grep -q '<dependency ' <<< "$core_nuspec"; then
+            echo "::error::Core package must not contain package dependencies."
+            exit 1
+          fi
+
+          grep -Fq '<dependency id="Mecesoft.ObjectMapper" version="1.0.0"' <<< "$di_nuspec"
+          grep -Fq '<dependency id="Microsoft.Extensions.DependencyInjection.Abstractions" version="8.0.2"' <<< "$di_nuspec"
+          grep -Fq '<dependency id="Microsoft.Extensions.DependencyInjection.Abstractions" version="10.0.13"' <<< "$di_nuspec"
+
+          echo "Package metadata and checksums verified for commit ${GITHUB_SHA}."
+
+      - name: Reject existing package versions
+        run: |
+          set -euo pipefail
+          for package in mecesoft.objectmapper mecesoft.objectmapper.dependencyinjection; do
+            url="https://api.nuget.org/v3-flatcontainer/${package}/${PACKAGE_VERSION}/${package}.${PACKAGE_VERSION}.nupkg"
+            status="$(curl --silent --show-error --retry 3 --retry-delay 2 \
+              --output /dev/null --write-out '%{http_code}' "$url")"
+
+            case "$status" in
+              404)
+                echo "No existing package: ${package} ${PACKAGE_VERSION}"
+                ;;
+              200)
+                echo "::error::${package} ${PACKAGE_VERSION} already exists. Refusing to overwrite."
+                exit 1
+                ;;
+              *)
+                echo "::error::Could not determine whether ${package} ${PACKAGE_VERSION} exists (HTTP ${status})."
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: NuGet login (OIDC -> temporary API key)
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Publish core package
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          # The .nupkg and .snupkg are in the same directory. NuGet V3 publishes
+          # the matching symbol package together with the primary package.
+          dotnet nuget push "artifacts/Mecesoft.ObjectMapper.${PACKAGE_VERSION}.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source "$NUGET_SOURCE"
+
+      - name: Publish dependency-injection package
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
+        run: |
+          set -euo pipefail
+          # Run only after the core package succeeds; this step is skipped
+          # automatically if the core publication fails.
+          dotnet nuget push "artifacts/Mecesoft.ObjectMapper.DependencyInjection.${PACKAGE_VERSION}.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source "$NUGET_SOURCE"
+
+      - name: Publication summary
+        run: |
+          {
+            echo "### NuGet publication completed"
+            echo ""
+            echo "- Version: ${PACKAGE_VERSION}"
+            echo "- Source commit: ${GITHUB_SHA}"
+            echo "- Core: Mecesoft.ObjectMapper"
+            echo "- DI: Mecesoft.ObjectMapper.DependencyInjection"
+            echo "- Temporary OIDC API key was used; no long-lived NuGet secret."
+          } >> "$GITHUB_STEP_SUMMARY"
